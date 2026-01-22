@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_train_bpe.py -v)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(maturin build:*)",
+      "Bash(wsl bash -c \"cd /mnt/h/ytb/assignment1-basics/bpe_rust && which cargo && which maturin\")",
+      "Bash(wsl bash:*)"
+    ]
+  }
+}

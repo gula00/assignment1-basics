@@ -11,7 +11,9 @@
       "Bash(cmd.exe /c \"cd /d H:\\\\ytb\\\\assignment1-basics && .venv\\\\Scripts\\\\python.exe -m pytest tests/test_train_bpe.py::test_train_bpe_special_token -v\")",
       "Bash(cmd.exe /c:*)",
       "Bash(/c/Users/Enki/AppData/Local/Programs/Python/Python313/python.exe -m pip install:*)",
-      "Bash(/c/Users/Enki/AppData/Local/Programs/Python/Python313/python.exe -m pytest:*)"
+      "Bash(/c/Users/Enki/AppData/Local/Programs/Python/Python313/python.exe -m pytest:*)",
+      "Bash(python -c:*)",
+      "Bash(python:*)"
     ]
   }
 }

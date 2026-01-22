@@ -34,6 +34,12 @@ zip -r "$output_file" . \
     -x '*.npz' \
     -x 'doc/*' \
     -x 'data/*' \
-    -x 'out/*'
+    -x 'out/*' \
+    -x '.claude/*' \
+    -x 'bpe_rust/target/*' \
+    -x '*.so' \
+    -x '*.rlib' \
+    -x '*.rmeta' \
+    -x '*.d'
 
 echo "All files have been compressed into $output_file"

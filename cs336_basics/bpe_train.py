@@ -8,8 +8,9 @@ from collections import defaultdict
 
 import regex as re
 
-# Fallback pattern for standard re module
-GPT2_PATTERN = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?[a-zA-Z]+| ?[0-9]+| ?[^\s\w]+|\s+(?!\S)|\s+""")
+# GPT-2 pretokenization pattern (using Unicode-aware character classes)
+# \p{L} matches any Unicode letter, \p{N} matches any Unicode number
+GPT2_PATTERN = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 
 
 def pretokenize(text: str) -> list[str]:
