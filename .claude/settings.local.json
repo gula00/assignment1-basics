@@ -4,7 +4,14 @@
       "Bash(python -m pytest:*)",
       "Bash(pip show:*)",
       "Bash(uv run pytest:*)",
-      "Bash(uv run python:*)"
+      "Bash(uv run python:*)",
+      "Bash(dir /b)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_train_bpe.py::test_train_bpe_special_token -v)",
+      "Bash(\"H:/ytb/assignment1-basics/.venv/Scripts/python.exe\" -m pytest:*)",
+      "Bash(cmd.exe /c \"cd /d H:\\\\ytb\\\\assignment1-basics && .venv\\\\Scripts\\\\python.exe -m pytest tests/test_train_bpe.py::test_train_bpe_special_token -v\")",
+      "Bash(cmd.exe /c:*)",
+      "Bash(/c/Users/Enki/AppData/Local/Programs/Python/Python313/python.exe -m pip install:*)",
+      "Bash(/c/Users/Enki/AppData/Local/Programs/Python/Python313/python.exe -m pytest:*)"
     ]
   }
 }

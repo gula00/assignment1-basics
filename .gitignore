@@ -163,4 +163,5 @@ cython_debug/
 *.zip
 
 doc/
-cs336_basics/bpe_train.py
+data/
+out/
