@@ -34,6 +34,6 @@ c. unicode 的规则
 验证举例: `b'\xc3\xa9'.decode('utf-8')`
 
 ### 2.3-2.5 BPE Tokenizer Training
-See [cs336_basics/train_bpe.py](./cs336_basics/train_bpe.py)
+See [cs336_basics/bpe_train.py](./cs336_basics/bpe_train.py)
 
 HuggingFace 有 Rust 实现的 [tokenizers](https://github.com/huggingface/tokenizers) 库, 快多了

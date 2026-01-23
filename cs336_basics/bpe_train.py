@@ -54,6 +54,45 @@ def compute_word_freqs(
     return word_freqs
 
 
+def compute_word_freqs_streaming(
+    input_path: str | os.PathLike,
+    special_tokens: list[str],
+    num_special: int,
+) -> dict[tuple[int, ...], int]:
+    """
+    Stream through file line-by-line to compute word frequencies (memory-efficient).
+
+    Args:
+        input_path: Path to the input file.
+        special_tokens: List of special tokens to exclude from tokenization.
+        num_special: Number of special tokens (used for ID offset).
+
+    Returns:
+        Dictionary mapping word (as tuple of token IDs) to frequency.
+    """
+    word_freqs: dict[tuple[int, ...], int] = defaultdict(int)
+
+    if special_tokens:
+        special_pattern = re.compile("|".join(re.escape(t) for t in special_tokens))
+    else:
+        special_pattern = None
+
+    with open(input_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if special_pattern:
+                segments = special_pattern.split(line)
+            else:
+                segments = [line]
+
+            for segment in segments:
+                for word in pretokenize(segment):
+                    word_bytes = word.encode("utf-8")
+                    word_ids = tuple(b + num_special for b in word_bytes)
+                    word_freqs[word_ids] += 1
+
+    return word_freqs
+
+
 def init_vocab(special_tokens: list[str]) -> tuple[dict[int, bytes], int]:
     """
     Initialize vocabulary with special tokens and byte values.
@@ -273,6 +312,7 @@ def train_bpe(
     special_tokens: list[str],
     merges_outpath: str | os.PathLike | None = None,
     vocab_outpath: str | os.PathLike | None = None,
+    streaming: bool = False,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """
     Train a BPE tokenizer on the given corpus.
@@ -283,6 +323,7 @@ def train_bpe(
         special_tokens: List of special tokens to add to vocabulary.
         merges_outpath: Optional path to save merges file.
         vocab_outpath: Optional path to save vocab file.
+        streaming: If True, use streaming to read file line-by-line (memory-efficient).
 
     Returns:
         vocab: Mapping from token ID to token bytes.
@@ -290,19 +331,27 @@ def train_bpe(
     """
     train_start_time = time.time()
 
-    # Read corpus
-    print("Read corpus: start")
-    start_time = time.time()
-    with open(input_path, "r", encoding="utf-8") as f:
-        text = f.read()
-    print(f"Read corpus: finished in {time.time() - start_time:.2f}s")
-
-    # Pre-tokenize and count word frequencies
     num_special = len(special_tokens)
-    print("Pre-tokenize: start")
-    start_time = time.time()
-    word_freqs = compute_word_freqs(text, special_tokens, num_special)
-    print(f"Pre-tokenize: finished in {time.time() - start_time:.2f}s")
+
+    if streaming:
+        # Streaming mode: read file line-by-line
+        print("Pre-tokenize (streaming): start")
+        start_time = time.time()
+        word_freqs = compute_word_freqs_streaming(input_path, special_tokens, num_special)
+        print(f"Pre-tokenize (streaming): finished in {time.time() - start_time:.2f}s")
+    else:
+        # Read entire corpus into memory
+        print("Read corpus: start")
+        start_time = time.time()
+        with open(input_path, "r", encoding="utf-8") as f:
+            text = f.read()
+        print(f"Read corpus: finished in {time.time() - start_time:.2f}s")
+
+        # Pre-tokenize and count word frequencies
+        print("Pre-tokenize: start")
+        start_time = time.time()
+        word_freqs = compute_word_freqs(text, special_tokens, num_special)
+        print(f"Pre-tokenize: finished in {time.time() - start_time:.2f}s")
 
     # Initialize vocabulary
     print("Init vocab: start")
