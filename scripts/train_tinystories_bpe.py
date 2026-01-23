@@ -43,14 +43,16 @@ def main():
     print(f"Initial memory: {start_memory:.2f} MB")
     print("-" * 50)
 
-    # Train BPE (use streaming for large files)
+    # Train BPE (use parallel processing for large files)
+    # Set parallel=N to use N workers, or parallel=None/0 to use streaming
+    num_workers = os.cpu_count() or 4
     vocab, merges = train_bpe(
         input_path=input_path,
         vocab_size=vocab_size,
         special_tokens=special_tokens,
         merges_outpath=merges_outpath,
         vocab_outpath=vocab_outpath,
-        streaming=True,
+        parallel=num_workers,  # Use parallel mode with all CPU cores
     )
 
     end_time = time.time()

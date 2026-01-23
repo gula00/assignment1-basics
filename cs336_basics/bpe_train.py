@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import time
 from collections import defaultdict
+from multiprocessing import Pool, cpu_count
+from typing import BinaryIO
 
 import regex as re
 
@@ -91,6 +93,164 @@ def compute_word_freqs_streaming(
                     word_freqs[word_ids] += 1
 
     return word_freqs
+
+
+# ============================================================================
+# Parallel processing functions
+# ============================================================================
+
+
+def find_chunk_boundaries(
+    file: BinaryIO,
+    desired_num_chunks: int,
+    split_special_token: bytes,
+) -> list[int]:
+    """
+    Chunk the file into parts that can be counted independently.
+    Boundaries are placed at special token locations to avoid splitting documents.
+
+    Args:
+        file: Binary file object to chunk.
+        desired_num_chunks: Target number of chunks.
+        split_special_token: Special token bytes to split on (e.g., b"<|endoftext|>").
+
+    Returns:
+        List of byte offsets marking chunk boundaries.
+    """
+    # Get total file size in bytes
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)
+
+    chunk_size = file_size // desired_num_chunks
+
+    # Initial guesses for chunk boundary locations, uniformly spaced
+    chunk_boundaries = [i * chunk_size for i in range(desired_num_chunks + 1)]
+    chunk_boundaries[-1] = file_size
+
+    mini_chunk_size = 4096  # Read ahead by 4k bytes at a time
+
+    for bi in range(1, len(chunk_boundaries) - 1):
+        initial_position = chunk_boundaries[bi]
+        file.seek(initial_position)
+        while True:
+            mini_chunk = file.read(mini_chunk_size)
+
+            # If EOF, this boundary should be at the end of the file
+            if mini_chunk == b"":
+                chunk_boundaries[bi] = file_size
+                break
+
+            # Find the special token in the mini chunk
+            found_at = mini_chunk.find(split_special_token)
+            if found_at != -1:
+                # Place boundary right after the special token
+                chunk_boundaries[bi] = initial_position + found_at + len(split_special_token)
+                break
+            initial_position += mini_chunk_size
+
+    # Make sure all boundaries are unique
+    return sorted(set(chunk_boundaries))
+
+
+def _process_chunk(args: tuple) -> dict[tuple[int, ...], int]:
+    """
+    Worker function to process a single chunk of the file.
+    Must be defined at module level for multiprocessing.
+
+    Args:
+        args: Tuple of (filepath, start, end, special_tokens, num_special)
+
+    Returns:
+        Word frequency dictionary for this chunk.
+    """
+    filepath, start, end, special_tokens, num_special = args
+
+    word_freqs: dict[tuple[int, ...], int] = defaultdict(int)
+
+    if special_tokens:
+        special_pattern = re.compile("|".join(re.escape(t) for t in special_tokens))
+    else:
+        special_pattern = None
+
+    with open(filepath, "rb") as f:
+        f.seek(start)
+        chunk = f.read(end - start).decode("utf-8", errors="ignore")
+
+    if special_pattern:
+        segments = special_pattern.split(chunk)
+    else:
+        segments = [chunk]
+
+    for segment in segments:
+        for word in pretokenize(segment):
+            word_bytes = word.encode("utf-8")
+            word_ids = tuple(b + num_special for b in word_bytes)
+            word_freqs[word_ids] += 1
+
+    return dict(word_freqs)
+
+
+def merge_word_freqs(
+    freq_dicts: list[dict[tuple[int, ...], int]],
+) -> dict[tuple[int, ...], int]:
+    """
+    Merge multiple word frequency dictionaries into one.
+
+    Args:
+        freq_dicts: List of word frequency dictionaries.
+
+    Returns:
+        Combined word frequency dictionary.
+    """
+    merged: dict[tuple[int, ...], int] = defaultdict(int)
+    for d in freq_dicts:
+        for word, freq in d.items():
+            merged[word] += freq
+    return merged
+
+
+def compute_word_freqs_parallel(
+    input_path: str | os.PathLike,
+    special_tokens: list[str],
+    num_special: int,
+    num_workers: int | None = None,
+) -> dict[tuple[int, ...], int]:
+    """
+    Compute word frequencies using parallel processing.
+
+    Args:
+        input_path: Path to the input file.
+        special_tokens: List of special tokens to exclude from tokenization.
+        num_special: Number of special tokens (used for ID offset).
+        num_workers: Number of worker processes (defaults to CPU count).
+
+    Returns:
+        Dictionary mapping word (as tuple of token IDs) to frequency.
+    """
+    if num_workers is None:
+        num_workers = cpu_count()
+
+    # Find chunk boundaries
+    split_token = special_tokens[0].encode("utf-8") if special_tokens else b"\n"
+
+    with open(input_path, "rb") as f:
+        boundaries = find_chunk_boundaries(f, num_workers, split_token)
+
+    print(f"  Split into {len(boundaries) - 1} chunks using {num_workers} workers")
+
+    # Prepare arguments for each worker
+    chunk_args = [
+        (str(input_path), start, end, special_tokens, num_special)
+        for start, end in zip(boundaries[:-1], boundaries[1:])
+    ]
+
+    # Process chunks in parallel
+    with Pool(num_workers) as pool:
+        results = pool.map(_process_chunk, chunk_args)
+
+    # Merge results
+    return merge_word_freqs(results)
 
 
 def init_vocab(special_tokens: list[str]) -> tuple[dict[int, bytes], int]:
@@ -313,6 +473,7 @@ def train_bpe(
     merges_outpath: str | os.PathLike | None = None,
     vocab_outpath: str | os.PathLike | None = None,
     streaming: bool = False,
+    parallel: int | None = None,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """
     Train a BPE tokenizer on the given corpus.
@@ -324,6 +485,8 @@ def train_bpe(
         merges_outpath: Optional path to save merges file.
         vocab_outpath: Optional path to save vocab file.
         streaming: If True, use streaming to read file line-by-line (memory-efficient).
+        parallel: Number of workers for parallel processing. If set, overrides streaming.
+                  Use 0 or None to disable parallelism.
 
     Returns:
         vocab: Mapping from token ID to token bytes.
@@ -333,7 +496,15 @@ def train_bpe(
 
     num_special = len(special_tokens)
 
-    if streaming:
+    if parallel and parallel > 0:
+        # Parallel mode: process file chunks in parallel
+        print(f"Pre-tokenize (parallel): start")
+        start_time = time.time()
+        word_freqs = compute_word_freqs_parallel(
+            input_path, special_tokens, num_special, num_workers=parallel
+        )
+        print(f"Pre-tokenize (parallel): finished in {time.time() - start_time:.2f}s")
+    elif streaming:
         # Streaming mode: read file line-by-line
         print("Pre-tokenize (streaming): start")
         start_time = time.time()
