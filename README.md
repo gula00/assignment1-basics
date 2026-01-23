@@ -1,50 +1,39 @@
 # CS336 Spring 2025 Assignment 1: Basics
 
-For a full description of the assignment, see the assignment handout at
-[cs336_spring2025_assignment1_basics.pdf](./cs336_spring2025_assignment1_basics.pdf)
+## My answers
 
-If you see any issues with the assignment handout or code, please feel free to
-raise a GitHub issue or open a pull request with a fix.
+### 2.1 The Unicode Standard
+a. `chr(0)` >>> `\x00`: `chr` 将 Integer 转换为 unicode, 反之用 `ord`
 
-## Setup
+b. `__repr__()` 和 print 的区别: 前者是 debug 用的, 后者优先 `__str__()`
 
-### Environment
-We manage our environments with `uv` to ensure reproducibility, portability, and ease of use.
-Install `uv` [here](https://github.com/astral-sh/uv) (recommended), or run `pip install uv`/`brew install uv`.
-We recommend reading a bit about managing projects in `uv` [here](https://docs.astral.sh/uv/guides/projects/#managing-dependencies) (you will not regret it!).
+c. 直接 `chr(0)` 用的 `__repr__`, 可见, print 则不可见
 
-You can now run any code in the repo using
-```sh
-uv run <python_file_path>
+### 2.2 Unicode Encodings
+a. Prefer training our tokenizer on UTF-8 encoded bytes: 
+
+- shorter sequences, simpler byte-level tokenization, and more efficient learning
+- 对于英文字母来说, unicode 和 ASCII 是一样的, emoji 和汉字等则用多个 byte 的 unicode 表示
+
+b. 下面代码的问题
+```python
+def decode_utf8_bytes_to_str_wrong(bytestring: bytes):
+    return "".join([bytes([b]).decode("utf-8") for b in bytestring])
+>>> decode_utf8_bytes_to_str_wrong("hello".encode("utf-8"))
 ```
-and the environment will be automatically solved and activated when necessary.
+UTF-8 是 1-4 bytes 动态长度
 
-### Run unit tests
+c. unicode 的规则
 
+- 0x00–0x7F: 单字节字符
 
-```sh
-uv run pytest
-```
+- 0xC2–0xDF: 双字节起始
 
-Initially, all tests should fail with `NotImplementedError`s.
-To connect your implementation to the tests, complete the
-functions in [./tests/adapters.py](./tests/adapters.py).
+- 0x80–0xBF: 双字节延续
 
-### Download data
-Download the TinyStories data and a subsample of OpenWebText
+验证举例: `b'\xc3\xa9'.decode('utf-8')`
 
-``` sh
-mkdir -p data
-cd data
+### 2.3-2.5 BPE Tokenizer Training
+See [cs336_basics/train_bpe.py](./cs336_basics/train_bpe.py)
 
-wget https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-train.txt
-wget https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-valid.txt
-
-wget https://huggingface.co/datasets/stanford-cs336/owt-sample/resolve/main/owt_train.txt.gz
-gunzip owt_train.txt.gz
-wget https://huggingface.co/datasets/stanford-cs336/owt-sample/resolve/main/owt_valid.txt.gz
-gunzip owt_valid.txt.gz
-
-cd ..
-```
-
+HuggingFace 有 Rust 实现的 [tokenizers](https://github.com/huggingface/tokenizers) 库, 快多了
