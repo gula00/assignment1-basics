@@ -37,3 +37,7 @@ c. unicode 的规则
 See [cs336_basics/bpe_train.py](./cs336_basics/bpe_train.py)
 
 HuggingFace 有 Rust 实现的 [tokenizers](https://github.com/huggingface/tokenizers) 库, 快多了
+
+merge 的优化: heapq, inverse
+
+But at large scale, it doesn't really matter. The major bottleneck is the pre-tokenization step, which can be optimized by parallelizing the tokenization process.

@@ -1,179 +1,89 @@
 """BPE Tokenizer implementation."""
 
-from __future__ import annotations
-
 from collections.abc import Iterable, Iterator
-from typing import IO
-
 import regex as re
+import pickle
 
-# GPT-2 pretokenization pattern (using Unicode-aware character classes)
-# \p{L} matches any Unicode letter, \p{N} matches any Unicode number
-GPT2_PATTERN = re.compile(
-    r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-)
+from cs336_basics import bpe_train
 
 
 class Tokenizer:
-    """BPE Tokenizer that uses a provided vocabulary and merge list."""
-
     def __init__(
-        self,
-        vocab: dict[int, bytes],
-        merges: list[tuple[bytes, bytes]],
-        special_tokens: list[str] | None = None,
+        self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None
     ):
-        """
-        Initialize the tokenizer.
-
-        Args:
-            vocab: Mapping from token ID to token bytes.
-            merges: List of merge operations as (token1_bytes, token2_bytes).
-            special_tokens: Optional list of special tokens that should not be split.
-        """
-        self.vocab = vocab  # id -> bytes
-        self.bytes_to_id = {v: k for k, v in vocab.items()}  # bytes -> id
+        self.vocab = vocab
+        self.vocab_inv = {v: k for k, v in vocab.items()}
         self.merges = merges
-        # Build merge ranking: (bytes1, bytes2) -> merge priority (lower = earlier)
-        self.merge_ranking: dict[tuple[bytes, bytes], int] = {
-            pair: i for i, pair in enumerate(merges)
-        }
+        self.merges_dict = {merge: i for i, merge in enumerate(merges)}
+        self.encode_cache = {}
 
-        # Handle special tokens
-        self.special_tokens = special_tokens or []
-        # Sort by length descending for longest match first
-        self.special_tokens_sorted = sorted(
-            self.special_tokens, key=len, reverse=True
-        )
-        # Build special token pattern for splitting
-        if self.special_tokens_sorted:
-            escaped = [re.escape(t) for t in self.special_tokens_sorted]
-            self.special_pattern = re.compile("(" + "|".join(escaped) + ")")
+        if special_tokens:
+            self.special_tokens = sorted(special_tokens, key=len, reverse=True)
+            self.special_pattern = "(" + "|".join(re.escape(k) for k in self.special_tokens) + ")"
+
+            next_id = max(self.vocab.keys()) + 1
+            for token in special_tokens:
+                token_bytes = token.encode("UTF-8")
+                if token_bytes not in self.vocab_inv:
+                    self.vocab[next_id] = token_bytes
+                    self.vocab_inv[token_bytes] = next_id
+                    next_id += 1
         else:
+            self.special_tokens = None
             self.special_pattern = None
 
-    def _pretokenize(self, text: str) -> list[str]:
-        """Pre-tokenize text using GPT-2 pattern."""
-        return GPT2_PATTERN.findall(text)
-
-    def _bpe_encode_word(self, word_bytes: bytes) -> list[int]:
-        """
-        Apply BPE to a single word (sequence of bytes).
-
-        Args:
-            word_bytes: The word as bytes.
-
-        Returns:
-            List of token IDs after applying BPE merges.
-        """
-        if len(word_bytes) == 0:
-            return []
-
-        # Start with individual bytes as tokens
-        tokens = [bytes([b]) for b in word_bytes]
-
-        while len(tokens) >= 2:
-            # Find the pair with lowest merge ranking (earliest merge)
-            best_pair = None
-            best_rank = float("inf")
-            best_idx = -1
-
-            for i in range(len(tokens) - 1):
-                pair = (tokens[i], tokens[i + 1])
-                if pair in self.merge_ranking:
-                    rank = self.merge_ranking[pair]
-                    if rank < best_rank:
-                        best_rank = rank
-                        best_pair = pair
-                        best_idx = i
-
-            if best_pair is None:
-                # No more merges possible
-                break
-
-            # Apply the merge
-            new_token = best_pair[0] + best_pair[1]
-            tokens = tokens[:best_idx] + [new_token] + tokens[best_idx + 2:]
-
-        # Convert bytes tokens to IDs
-        return [self.bytes_to_id[t] for t in tokens]
+    @classmethod
+    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
+        with open(vocab_filepath, "rb") as f:
+            vocab = pickle.load(f)
+        with open(merges_filepath, "rb") as f:
+            merges = pickle.load(f)
+        return cls(vocab, merges, special_tokens)
 
     def encode(self, text: str) -> list[int]:
-        """
-        Encode text into a list of token IDs.
+        if not self.special_tokens:
+            return self._encode_chunk(text)
 
-        Args:
-            text: The text to encode.
-
-        Returns:
-            List of token IDs.
-        """
-        if not text:
-            return []
-
-        result: list[int] = []
-
-        # Split by special tokens if any
-        if self.special_pattern:
-            parts = self.special_pattern.split(text)
-        else:
-            parts = [text]
-
-        for part in parts:
-            if not part:
-                continue
-
-            # Check if this part is a special token
+        ids = []
+        for part in re.split(self.special_pattern, text):
             if part in self.special_tokens:
-                # Get the token ID for this special token
-                special_bytes = part.encode("utf-8")
-                if special_bytes in self.bytes_to_id:
-                    result.append(self.bytes_to_id[special_bytes])
-                continue
+                ids.append(self.vocab_inv[part.encode("UTF-8")])
+            else:
+                ids.extend(self._encode_chunk(part))
+        return ids
 
-            # Pre-tokenize and encode each word
-            words = self._pretokenize(part)
-            for word in words:
-                word_bytes = word.encode("utf-8")
-                token_ids = self._bpe_encode_word(word_bytes)
-                result.extend(token_ids)
+    def _encode_chunk(self, text: str) -> list[int]:
+        ids = []
+        for p in bpe_train.PAT.findall(text):
+            if p in self.encode_cache:
+                ids.extend(self.encode_cache[p])
+            else:
+                rep = [bytes([b]) for b in p.encode("UTF-8")]
+                merged = self._merge_subword(rep)
+                token_ids = [self.vocab_inv[subword] for subword in merged]
+                self.encode_cache[p] = token_ids
+                ids.extend(token_ids)
+        return ids
 
-        return result
+    def _merge_subword(self, rep: list[bytes]) -> list[bytes]:
+        while True:
+            best_rank = float("inf")
+            best_idx = None
 
-    def decode(self, token_ids: list[int]) -> str:
-        """
-        Decode a list of token IDs back to text.
+            for i in range(len(rep) - 1):
+                rank = self.merges_dict.get((rep[i], rep[i + 1]))
+                if rank is not None and rank < best_rank:
+                    best_rank = rank
+                    best_idx = i
 
-        Args:
-            token_ids: List of token IDs to decode.
+            if best_idx is None:
+                return rep
 
-        Returns:
-            Decoded text string.
-        """
-        if not token_ids:
-            return ""
+            rep = rep[:best_idx] + [rep[best_idx] + rep[best_idx + 1]] + rep[best_idx + 2:]
 
-        # Concatenate all token bytes
-        byte_sequence = b"".join(self.vocab[token_id] for token_id in token_ids)
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        for text in iterable:
+            yield from self.encode(text)
 
-        # Decode as UTF-8, using surrogatepass to handle partial sequences
-        # that might occur when decoding individual tokens
-        return byte_sequence.decode("utf-8", errors="replace")
-
-    def encode_iterable(self, iterable: Iterable[str] | IO[str]) -> Iterator[int]:
-        """
-        Encode an iterable of strings (like a file object) into token IDs.
-
-        This is a memory-efficient streaming encoder that yields token IDs
-        one at a time.
-
-        Args:
-            iterable: An iterable of strings (e.g., file object opened in text mode).
-
-        Yields:
-            Token IDs one at a time.
-        """
-        for line in iterable:
-            token_ids = self.encode(line)
-            for token_id in token_ids:
-                yield token_id
+    def decode(self, ids: list[int]) -> str:
+        return b"".join(self.vocab[id] for id in ids).decode("UTF-8", errors="replace")
