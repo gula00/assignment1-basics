@@ -164,3 +164,7 @@ cython_debug/
 
 doc/
 data/
+out/
+
+nul
+runs

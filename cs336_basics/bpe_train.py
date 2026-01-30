@@ -54,12 +54,16 @@ def _process_chunk(args: tuple) -> dict[tuple[int, ...], int]:
     return dict(freqs)
 
 
-def pre_tokenize(input_path: str | os.PathLike, special_tokens: list[str], num_special: int) -> dict[tuple[int, ...], int]:
-    num_workers = cpu_count()
+def pre_tokenize(input_path: str | os.PathLike, special_tokens: list[str], num_special: int, max_chunk_bytes: int = 256 * 1024 * 1024, num_workers: int | None = None) -> dict[tuple[int, ...], int]:
+    num_workers = num_workers or cpu_count()
     split_token = special_tokens[0].encode("utf-8") if special_tokens else b"\n"
 
+    # Determine number of chunks based on file size to limit per-chunk memory
+    file_size = os.path.getsize(str(input_path))
+    num_chunks = max(num_workers, (file_size + max_chunk_bytes - 1) // max_chunk_bytes)
+
     with open(input_path, "rb") as f:
-        boundaries = find_chunk_boundaries(f, num_workers, split_token)
+        boundaries = find_chunk_boundaries(f, num_chunks, split_token)
 
     with Pool(num_workers) as pool:
         results = pool.map(_process_chunk, [
@@ -171,7 +175,11 @@ def train_bpe(
 
     print("Pre-tokenize: start")
     t0 = time.time()
-    freqs = pre_tokenize(input_path, special_tokens, num_special)
+    freqs = pre_tokenize(
+        input_path, special_tokens, num_special,
+        max_chunk_bytes=kwargs.get("max_chunk_bytes", 256 * 1024 * 1024),
+        num_workers=kwargs.get("num_workers"),
+    )
     print(f"Pre-tokenize: {time.time() - t0:.2f}s")
 
     print("Build index: start")

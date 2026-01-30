@@ -36,8 +36,51 @@ c. unicode 的规则
 ### 2.3-2.5 BPE Tokenizer Training
 See [cs336_basics/bpe_train.py](./cs336_basics/bpe_train.py)
 
-HuggingFace 有 Rust 实现的 [tokenizers](https://github.com/huggingface/tokenizers) 库, 快多了
+HuggingFace 有 Rust 的 [tokenizers](https://github.com/huggingface/tokenizers) 库, 快多了
 
-merge 的优化: heapq, inverse
+Karpathy 的 bpe 实现:
+- minbpe: https://github.com/karpathy/minbpe
+- rustbpe: https://github.com/karpathy/rustbpe
 
-But at large scale, it doesn't really matter. The major bottleneck is the pre-tokenization step, which can be optimized by parallelizing the tokenization process.
+merge 的优化:
+- Inverted Index: 直接查找受影响的词, 不用遍历
+- heapq: pop lex_order / freq 最大的
+
+### 2.6-2.8 Tokenizer Training & Analysis
+See [tokenizer_answers.md](./tokenizer_answers.md)
+
+### 3. Transformer Language Model Architecture
+资源计算 (Resource Accounting):
+- GPT-2 XL: 2.05B params, 8.19 GB (float32), 4.5T FLOPs/seq
+- FFN 占比最大 (67%), 因为 d_ff = 4 × d_model
+- Context 16384: FLOPs 增加 33×, attention 变成主要瓶颈 (56%)
+
+### 4. Training a Transformer LM
+训练要点:
+- Cross-entropy: log-sum-exp trick 避免数值溢出
+- Learning rate: 最佳 lr 在稳定边界附近, 过大会发散
+- AdamW 内存: 16N (params + grads + optimizer state) + activations
+- GPT-2 XL 在 A100 (FP32, 50% MFU) 训练 400K steps 需要 ~15 年, 所以需要混合精度和多卡
+
+没上 slurm, 那个机子有点忙, 在宿舍的 4070tis 上训的, loss 缩到 2.67, 还有很大的提升空间
+
+训练过程保存在 wandb 上, 有时间做一做不同参数对比
+![overview](images/wandb.png )
+
+### Inference
+
+```bash
+uv run scripts/generate.py --checkpoint runs/tinystories/checkpoints/best.pt --prompt "Once upon a time" --max_tokens 256 --temperature 0.7
+```
+
+## Schedule
+
+  1. train_bpe
+  2. tokenizer (依赖 train_bpe)
+  3. nn_utils (softmax, cross_entropy, gradient_clipping)
+  4. model 基础组件 (linear, embedding, rmsnorm, rope, silu)
+  5. model 注意力 (attention, multihead_attention)
+  6. model 完整 (swiglu, transformer_block, transformer_lm)
+  7. optimizer (adamw, lr_schedule)
+  8. data (get_batch)
+  9. serialization (checkpointing)

@@ -13,7 +13,11 @@
       "Bash(/c/Users/Enki/AppData/Local/Programs/Python/Python313/python.exe -m pip install:*)",
       "Bash(/c/Users/Enki/AppData/Local/Programs/Python/Python313/python.exe -m pytest:*)",
       "Bash(python -c:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(ls -la \"H:\\\\ytb\\\\assignment1-basics\\\\data\"\" 2>/dev/null || dir \"H:ytbassignment1-basicsdata \")",
+      "Bash(ls -la \"H:\\\\ytb\\\\assignment1-basics\\\\out\"\" 2>/dev/null || dir \"H:ytbassignment1-basicsout \")",
+      "Bash(dir:*)",
+      "Bash(ls -lh \"H:\\\\ytb\\\\assignment1-basics\\\\runs\\\\tinystories\\\\checkpoints\"\" 2>/dev/null || ls -lh \"H:ytbassignment1-basicsruns\"\")"
     ]
   }
 }
