@@ -120,25 +120,22 @@ class SwiGLU(nn.Module):
 
 
 def scaled_dot_product_attention(Q: Tensor, K: Tensor, V: Tensor, mask: Tensor | None = None) -> Tensor:
-    """Scaled dot-product attention.
-
-    Args:
-        Q: (..., queries, d_k)
-        K: (..., keys, d_k)
-        V: (..., keys, d_v)
-        mask: (..., queries, keys) True where attention should be masked
-
-    Returns:
-        (..., queries, d_v)
+    """
+    Q: (..., queries, d_k)
+    K: (..., keys, d_k)
+    V: (..., keys, d_v)
+    mask: (..., queries, keys)
     """
     d_k = Q.size(-1)
-    scores = Q @ K.transpose(-2, -1) / math.sqrt(d_k)
+    scores = torch.einsum("...qd,...kd->...qk", Q, K) / math.sqrt(d_k)
 
     if mask is not None:
         scores = scores.masked_fill(~mask, float("-inf"))
 
     weights = torch.softmax(scores, dim=-1)
-    return weights @ V
+    output = torch.einsum("...qk,...kd->...qd", weights, V)
+
+    return output
 
 
 class MultiheadSelfAttention(nn.Module):
@@ -166,23 +163,28 @@ class MultiheadSelfAttention(nn.Module):
         """
         batch, seq_len, _ = x.shape
 
-        Q = self.q_proj(x).view(batch, seq_len, self.num_heads, self.d_k).transpose(1, 2)
-        K = self.k_proj(x).view(batch, seq_len, self.num_heads, self.d_k).transpose(1, 2)
-        V = self.v_proj(x).view(batch, seq_len, self.num_heads, self.d_k).transpose(1, 2)
+        # Q = self.q_proj(x).view(batch, seq_len, self.num_heads, self.d_k).transpose(1, 2)
+        # K = self.k_proj(x).view(batch, seq_len, self.num_heads, self.d_k).transpose(1, 2)
+        # V = self.v_proj(x).view(batch, seq_len, self.num_heads, self.d_k).transpose(1, 2)
+
+        Q = rearrange(self.q_proj(x), "b s (h d) -> b h s d", h=self.num_heads)
+        K = rearrange(self.k_proj(x), "b s (h d) -> b h s d", h=self.num_heads)
+        V = rearrange(self.v_proj(x), "b s (h d) -> b h s d", h=self.num_heads)
 
         if rope is not None:
             if positions is None:
                 positions = torch.arange(seq_len, device=x.device)
+            # rotate Q K, V stays still
             Q = rope(Q, positions)
             K = rope(K, positions)
 
         # Causal mask: True = attend, False = mask (lower triangular)
         mask = torch.tril(torch.ones(seq_len, seq_len, dtype=torch.bool, device=x.device))
 
-        attn_out = scaled_dot_product_attention(Q, K, V, mask)
-        attn_out = attn_out.transpose(1, 2).contiguous().view(batch, seq_len, self.d_model)
+        y = scaled_dot_product_attention(Q, K, V, mask)
+        y = rearrange(y, "b h s d -> b s (h d)")
 
-        return self.output_proj(attn_out)
+        return self.output_proj(y)
 
 
 class TransformerBlock(nn.Module):
@@ -201,8 +203,6 @@ class TransformerBlock(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    """Transformer Language Model."""
-
     def __init__(
         self,
         vocab_size: int,
@@ -236,10 +236,13 @@ class TransformerLM(nn.Module):
             (batch, seq_len, vocab_size) logits
         """
         batch, seq_len = token_ids.shape
-        positions = torch.arange(seq_len, device=token_ids.device).unsqueeze(0).expand(batch, -1)
+        # [S] -> [1, S] -> [B, S]
+        positions = torch.arange(seq_len, device=token_ids.device).unsqueeze(0).expand(batch, seq_len)
 
         x = self.token_embeddings(token_ids)
         for layer in self.layers:
             x = layer(x, positions)
         x = self.ln_final(x)
-        return self.lm_head(x)
+        x = self.lm_head(x)
+
+        return x
